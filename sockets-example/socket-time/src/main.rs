@@ -1,10 +1,7 @@
 use std::{
-    fmt,
     io::{Read, Write},
-    mem::size_of,
-    net::{self, Shutdown, TcpListener, TcpStream},
+    net::{Shutdown, TcpListener, TcpStream},
     thread,
-    time::{self, SystemTime},
 };
 
 //impl fmt::Display for SystemTime {
@@ -33,10 +30,12 @@ fn main() -> std::io::Result<()> {
 fn handle_client(mut stream: TcpStream) {
     let mut buffer = [0; 1024];
     while match stream.read(&mut buffer) {
-        Ok(_) => {
-             let response = format!("Hello, client! The local time is: {:?}", SystemTime::now());
-             stream.write(response.as_bytes()).unwrap();
-            true
+        Ok(s) => {
+            let client_request = String::from_utf8_lossy(&buffer[0..s]);
+            println!("Converting to upper case....");
+            let upper_case = client_request.to_uppercase();
+            stream.write(upper_case.as_bytes()).unwrap();
+            return;
         }
         Err(e) => {
             println!("Error: {}", e);
