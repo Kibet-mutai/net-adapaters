@@ -1,11 +1,13 @@
+use std::fmt;
 use std::net::TcpStream;
-use std::str::from_utf8;
+use std::os::unix::ffi::OsStrExt;
 use std::{
     collections::HashMap,
     io::{Read, Write},
     ops::Range,
 };
-use std::{fmt, io};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 #[derive(Debug)]
 pub enum Error {
@@ -73,6 +75,8 @@ pub struct Connection {
     stream: TcpStream,
 }
 
+
+#[derive(Debug, Clone)]
 pub enum Method {
     GET,
     POST,
@@ -90,6 +94,8 @@ impl fmt::Display for Method {
     }
 }
 
+
+#[derive(Debug, Clone)]
 pub struct Request {
     method: Method,
     headers: HashMap<String, String>,
@@ -152,6 +158,12 @@ impl Request {
         }
     }
 }
+struct Person {
+    name: String,
+    age: u8,
+    phones: Vec<String>,
+}
+
 impl Connection {
     pub fn new(parse_url: &str) -> Result<Connection, Error> {
         let url = ParsedUrl::from(&parse_url).unwrap();
@@ -159,8 +171,8 @@ impl Connection {
         Ok(Connection { url, stream })
     }
 
-    pub fn send_request(&mut self) -> Result<(), Error> {
-        let mut request = Request::new();
+    pub fn set_headers(&mut self) -> Result<(), Error> {
+        let  request = Request::new();
         self.stream
             .write_all(format!("GET {} HTTP/1.1\r\n", self.url.path).as_bytes())
             .unwrap();
@@ -189,28 +201,98 @@ impl Connection {
         }
 
         self.stream.write_all(b"\r\n\r\n").unwrap();
+        Ok(())
+    }
+
+    pub fn get_response(&mut self, response: &str) -> Option<(String, String)> {
+        let mut parts = response.split("\r\n\r\n");
+        if let (Some(headers), Some(body)) = (parts.next(), parts.next()) {
+            Some((headers.to_string(), body.to_string()))
+        } else {
+            None
+        }
+    }
+
+    pub fn send_request(&mut self) -> Result<(), Error> {
+        let _ = self.set_headers().unwrap();
+        //let mut headers = HashMap::new();
+        //let mut body = Vec::new();
+        let mut buffer = String::new();
+           let bytes_read = self.stream.read_to_string(&mut buffer).unwrap();
+           let res = &buffer[..bytes_read];
+           if let Some((headers, body)) = self.get_response(res) {
+               println!("Headers:\n{}\n\nBody:\n{}", headers, body);
+           }
+           println!("String Data: {:?}", res);
+        Ok(())
+    }
+
+    //TODO: Implement post method.
+    pub fn post(&mut self, data: String) -> Result<(), Error> {
+         let request = Request::new();
+        self.stream
+            .write_all(format!("POST {} HTTP/1.1\r\n", self.url.path).as_bytes())
+            .unwrap();
+        self.stream
+            .write_all(format!("HOST: {}\r\n", self.url.host).as_bytes())
+            .unwrap();
+        for header in request.get_headers() {
+            self.stream
+                .write_all(format!("{}: {}\r\n", header.0, header.1).as_bytes())
+                .unwrap();
+        }
+        self.stream
+            .write_all(format!("Content-Length: {}\r\n", request.get_content_length()).as_bytes())
+            .unwrap();
+        self.stream
+            .write_all(format!("Content-type: application/json\r\n").as_bytes())
+            .unwrap();
+        if let Some(range) = request.get_range() {
+            self.stream
+                .write_all(format!("Range: bytes={}-{}\r\n", range.start, range.end).as_bytes())
+                .unwrap();
+        }
+
+        self.stream.write_all(b"Connection: Close\r\n").unwrap();
+        self.stream.write_all(b"\r\n").unwrap();
+
+        if let Some(body) = request.get_body() {
+            self.stream.write_all(body.as_slice()).unwrap();
+        }
+
+        self.stream.write_all(b"\r\n\r\n").unwrap();
+        //let mut json: T = serde_json::from_str(data).unwrap();
+        self.stream.write_all(data.as_bytes()).unwrap();
         let mut buf = String::new();
         match self.stream.read_to_string(&mut buf) {
             Ok(_) => {
-                let mut response = buf.split("/");
-                let scheme = response.next();
-                let protocol = response.next();
-                let status_code = response.next();
-                println!("Response:\n{:?}", buf);
+                println!("Response from post: {:?}", buf);
             }
             Err(e) => {
-                println!("Failed to receive data: {}", e);
+                println!("Error: {}", e);
             }
         }
+
+
         Ok(())
     }
 }
 
 fn main() -> Result<(), Error> {
     let url = "https://example.com";
-
+    //let body = reqwest::get(url).await?.text().await?;
+    //println!("body: {:?}", body);
     let mut connection = Connection::new(&url).unwrap();
     //println!("Connection: {:?}", connection);
     connection.send_request().unwrap();
+  let data = json!({
+        "name": "John Doe",
+        "age": 43,
+        "phones": [
+            "+44 1234567",
+            "+44 2345678"
+        ]
+    });
+    //connection.post(data.to_string()).unwrap();
     Ok(())
 }
